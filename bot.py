@@ -88,12 +88,12 @@ async def get_game_url_from_pinned(client, entity):
     for row in msg.buttons:
         for button in row:
             print(f"دکمه پیدا شد در پیام پین: text={button.text!r}")
+            sender = await msg.get_sender()
             webview = await client(RequestWebViewRequest(
                 peer=entity,
-                bot=msg.from_id if msg.from_id else entity,
+                bot=sender,
                 url=None,
                 platform="android",
-                reply_to=msg.id,
             ))
             return webview.url
     return None
@@ -117,12 +117,12 @@ async def get_game_url(client):
             for button in row:
                 btn_text = (button.text or "").strip().lower()
                 if BUTTON_TEXT in btn_text:
+                    sender = await message.get_sender()
                     webview = await client(RequestWebViewRequest(
                         peer=entity,
-                        bot=message.from_id if message.from_id else entity,
+                        bot=sender,
                         url=None,
                         platform="android",
-                        reply_to=message.id,
                     ))
                     return webview.url
     print("روش ۱ (پیام) جواب نداد - می‌ریم سراغ روش ۲ (منوی بات)")
@@ -224,4 +224,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-            
