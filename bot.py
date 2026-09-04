@@ -87,15 +87,39 @@ async def get_game_url_from_pinned(client, entity):
 
     for row in msg.buttons:
         for button in row:
-            print(f"دکمه پیدا شد در پیام پین: text={button.text!r}")
+            print(f"دکمه پیدا شد در پیام پین: text={button.text!r} type={type(button.button).__name__}")
+
+            candidates = []
+            via_bot = await msg.get_input_sender() if False else None
+            if getattr(msg, "via_bot_id", None):
+                try:
+                    via_bot_entity = await client.get_entity(msg.via_bot_id)
+                    candidates.append(("via_bot", via_bot_entity))
+                except Exception as e:
+                    print("نتونستیم via_bot رو resolve کنیم:", e)
+
             sender = await msg.get_sender()
-            webview = await client(RequestWebViewRequest(
-                peer=entity,
-                bot=sender,
-                url=None,
-                platform="android",
-            ))
-            return webview.url
+            candidates.append(("sender", sender))
+
+            for label, bot_candidate in candidates:
+                try:
+                    print(f"تلاش با {label}: {getattr(bot_candidate, 'username', bot_candidate)}")
+                    webview = await client(RequestWebViewRequest(
+                        peer=entity,
+                        bot=bot_candidate,
+                        url=None,
+                        platform="android",
+                    ))
+                    return webview.url
+                except Exception as e:
+                    print(f"   شکست خورد با {label}: {e}")
+
+            # اگه هیچ‌کدوم جواب نداد ولی خود دکمه یک URL مستقیم داره، همونو برگردون
+            raw_url = getattr(button.button, "url", None)
+            if raw_url:
+                print(f"به‌جای WebView، از URL مستقیم دکمه استفاده می‌کنیم: {raw_url}")
+                return raw_url
+
     return None
 
 
