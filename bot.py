@@ -2,10 +2,10 @@ import asyncio
 import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.functions.messages import RequestWebViewRequest, ImportChatInviteRequest
+from telethon.tl.functions.messages import RequestWebViewRequest, ImportChatInviteRequest, GetBotCallbackAnswerRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.channels import GetParticipantsRequest
-from telethon.tl.types import ChannelParticipantsBots, BotMenuButton
+from telethon.tl.types import ChannelParticipantsBots, BotMenuButton, KeyboardButtonGame
 from telethon.errors import UserAlreadyParticipantError, FloodWaitError, InviteHashExpiredError
 from playwright.async_api import async_playwright
 
@@ -88,6 +88,15 @@ async def get_game_url_from_pinned(client, entity):
     for row in msg.buttons:
         for button in row:
             print(f"دکمه پیدا شد در پیام پین: text={button.text!r} type={type(button.button).__name__}")
+
+            if isinstance(button.button, KeyboardButtonGame):
+                answer = await client(GetBotCallbackAnswerRequest(
+                    peer=entity,
+                    msg_id=msg.id,
+                    game=True,
+                ))
+                print(f"لینک بازی رسمی تلگرام گرفته شد: {answer.url}")
+                return answer.url
 
             candidates = []
             via_bot = await msg.get_input_sender() if False else None
