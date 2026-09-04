@@ -3,6 +3,9 @@ import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestWebViewRequest, ImportChatInviteRequest
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.channels import GetParticipantsRequest
+from telethon.tl.types import ChannelParticipantsBots, BotMenuButton
 from telethon.errors import UserAlreadyParticipantError, FloodWaitError, InviteHashExpiredError
 from playwright.async_api import async_playwright
 
@@ -11,6 +14,7 @@ API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 GROUP_INVITE = os.environ.get("GROUP_INVITE", "https://t.me/+HfoXTH_qx4k1Zjg0")
 BUTTON_TEXT = os.environ.get("BUTTON_TEXT", "play lumberjack").lower()
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "").lower()  # اختیاری: یوزرنیم دقیق بات بازی، مثلا gamebot
 MODE = os.environ.get("MODE", "recon")  # "recon" یا "play"
 TARGET_SCORE = int(os.environ.get("TARGET_SCORE", "4000"))
 VIEWPORT = {"width": 412, "height": 915}  # نسبت صفحه یک گوشی معمولی اندروید
@@ -28,10 +32,53 @@ async def join_group(client):
         raise RuntimeError("لینک دعوت گروه منقضی/نامعتبره - یک لینک تازه بگیر")
 
 
+async def find_bots_in_group(client, entity):
+    """همه بات‌های عضو گروه رو لیست می‌کنه."""
+    try:
+        result = await client(GetParticipantsRequest(
+            entity, ChannelParticipantsBots(), offset=0, limit=100, hash=0
+        ))
+        return result.users
+    except Exception as e:
+        print("نتونستیم مستقیم لیست بات‌ها رو بگیریم:", e)
+        return []
+
+
+async def get_game_url_via_menu_button(client, entity):
+    bots = await find_bots_in_group(client, entity)
+    print(f"تعداد بات‌های پیدا شده در گروه: {len(bots)}")
+
+    for bot in bots:
+        uname = (bot.username or "").lower()
+        print(f" - بات: @{bot.username} (id={bot.id})")
+        if BOT_USERNAME and uname != BOT_USERNAME:
+            continue
+
+        full = await client(GetFullUserRequest(bot))
+        bot_info = getattr(full.full_user, "bot_info", None)
+        menu_button = getattr(bot_info, "menu_button", None) if bot_info else None
+
+        if isinstance(menu_button, BotMenuButton):
+            print(f"   menu_button پیدا شد: text={menu_button.text!r} url={menu_button.url!r}")
+            webview = await client(RequestWebViewRequest(
+                peer=entity,
+                bot=bot,
+                platform="android",
+                from_bot_menu=True,
+                url=menu_button.url,
+            ))
+            return webview.url
+        else:
+            print("   این بات menu_button از نوع WebApp نداره")
+
+    return None
+
+
 async def get_game_url(client):
     entity = await join_group(client)
     print("عضو گروه شدیم / از قبل عضو بودیم:", getattr(entity, "title", entity))
 
+    # روش ۱: دکمه شیشه‌ای زیر یک پیام
     async for message in client.iter_messages(entity, limit=300):
         if not message.buttons:
             continue
@@ -47,6 +94,13 @@ async def get_game_url(client):
                         reply_to=message.id,
                     ))
                     return webview.url
+    print("روش ۱ (پیام) جواب نداد - می‌ریم سراغ روش ۲ (منوی بات)")
+
+    # روش ۲: Menu Button وب‌اپ بات
+    url = await get_game_url_via_menu_button(client, entity)
+    if url:
+        return url
+
     raise RuntimeError("دکمه بازی پیدا نشد - BUTTON_TEXT یا GROUP_INVITE رو چک کن")
 
 
@@ -139,4 +193,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
+    
