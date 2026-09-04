@@ -16,16 +16,28 @@ GROUP_INVITE = os.environ.get("GROUP_INVITE", "https://t.me/+HfoXTH_qx4k1Zjg0")
 BUTTON_TEXT = os.environ.get("BUTTON_TEXT", "play lumberjack").lower()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "").lower()  # اختیاری: یوزرنیم دقیق بات بازی، مثلا gamebot
 PINNED_MESSAGE_ID = int(os.environ.get("PINNED_MESSAGE_ID", "145397"))  # آیدی پیام پین شده با دکمه بازی
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "4467330949"))  # آیدی عددی گروه (از لینک t.me/c/...)
 MODE = os.environ.get("MODE", "recon")  # "recon" یا "play"
 TARGET_SCORE = int(os.environ.get("TARGET_SCORE", "4000"))
 VIEWPORT = {"width": 412, "height": 915}  # نسبت صفحه یک گوشی معمولی اندروید
 
 
 async def join_group(client):
-    """اول سعی می‌کنه عضو گروه بشه (اگه قبلاً عضو بوده، خطا رو نادیده می‌گیره)."""
-    invite_hash = GROUP_INVITE.rstrip("/").split("/")[-1].lstrip("+")
+    """
+    اول بین دیالوگ‌های موجود (گروه‌هایی که از قبل عضوشونیم) می‌گرده -
+    این هیچ درخواست حساس/فلود-محدودی به تلگرام نمی‌زنه.
+    فقط اگه پیدا نشد (یعنی واقعاً عضو نیستیم)، از لینک دعوت جوین می‌شیم.
+    """
+    target_hash = GROUP_INVITE.rstrip("/").split("/")[-1].lstrip("+")
+
+    async for dialog in client.iter_dialogs():
+        if dialog.is_group or dialog.is_channel:
+            if str(getattr(dialog.entity, "id", "")) == str(CHANNEL_ID):
+                return dialog.entity
+
+    print("توی دیالوگ‌های فعلی پیدا نشد - تلاش برای جوین از لینک دعوت")
     try:
-        updates = await client(ImportChatInviteRequest(invite_hash))
+        updates = await client(ImportChatInviteRequest(target_hash))
         return updates.chats[0]
     except UserAlreadyParticipantError:
         return await client.get_entity(GROUP_INVITE)
