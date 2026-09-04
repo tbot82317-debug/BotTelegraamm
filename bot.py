@@ -15,6 +15,7 @@ SESSION_STRING = os.environ["SESSION_STRING"]
 GROUP_INVITE = os.environ.get("GROUP_INVITE", "https://t.me/+HfoXTH_qx4k1Zjg0")
 BUTTON_TEXT = os.environ.get("BUTTON_TEXT", "play lumberjack").lower()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "").lower()  # اختیاری: یوزرنیم دقیق بات بازی، مثلا gamebot
+PINNED_MESSAGE_ID = int(os.environ.get("PINNED_MESSAGE_ID", "145397"))  # آیدی پیام پین شده با دکمه بازی
 MODE = os.environ.get("MODE", "recon")  # "recon" یا "play"
 TARGET_SCORE = int(os.environ.get("TARGET_SCORE", "4000"))
 VIEWPORT = {"width": 412, "height": 915}  # نسبت صفحه یک گوشی معمولی اندروید
@@ -74,9 +75,39 @@ async def get_game_url_via_menu_button(client, entity):
     return None
 
 
+async def get_game_url_from_pinned(client, entity):
+    """مستقیم پیامی که آیدیش رو می‌دونیم (پیام پین‌شده با دکمه شیشه‌ای) رو می‌خونه."""
+    msg = await client.get_messages(entity, ids=PINNED_MESSAGE_ID)
+    if not msg:
+        print(f"پیام با آیدی {PINNED_MESSAGE_ID} پیدا نشد")
+        return None
+    if not msg.buttons:
+        print(f"پیام {PINNED_MESSAGE_ID} دکمه‌ای نداره")
+        return None
+
+    for row in msg.buttons:
+        for button in row:
+            print(f"دکمه پیدا شد در پیام پین: text={button.text!r}")
+            webview = await client(RequestWebViewRequest(
+                peer=entity,
+                bot=msg.from_id if msg.from_id else entity,
+                url=None,
+                platform="android",
+                reply_to=msg.id,
+            ))
+            return webview.url
+    return None
+
+
 async def get_game_url(client):
     entity = await join_group(client)
     print("عضو گروه شدیم / از قبل عضو بودیم:", getattr(entity, "title", entity))
+
+    # روش ۰: مستقیم از روی آیدی پیام پین‌شده (مطمئن‌ترین روش)
+    url = await get_game_url_from_pinned(client, entity)
+    if url:
+        return url
+    print("روش ۰ (پیام پین با آیدی مستقیم) جواب نداد - می‌ریم سراغ روش ۱")
 
     # روش ۱: دکمه شیشه‌ای زیر یک پیام
     async for message in client.iter_messages(entity, limit=300):
@@ -193,4 +224,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+            
