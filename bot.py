@@ -2,7 +2,8 @@ import asyncio
 import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.functions.messages import RequestWebViewRequest
+from telethon.tl.functions.messages import RequestWebViewRequest, ImportChatInviteRequest
+from telethon.errors import UserAlreadyParticipantError, FloodWaitError, InviteHashExpiredError
 from playwright.async_api import async_playwright
 
 API_ID = int(os.environ["API_ID"])
@@ -15,9 +16,23 @@ TARGET_SCORE = int(os.environ.get("TARGET_SCORE", "4000"))
 VIEWPORT = {"width": 412, "height": 915}  # نسبت صفحه یک گوشی معمولی اندروید
 
 
+async def join_group(client):
+    """اول سعی می‌کنه عضو گروه بشه (اگه قبلاً عضو بوده، خطا رو نادیده می‌گیره)."""
+    invite_hash = GROUP_INVITE.rstrip("/").split("/")[-1].lstrip("+")
+    try:
+        updates = await client(ImportChatInviteRequest(invite_hash))
+        return updates.chats[0]
+    except UserAlreadyParticipantError:
+        return await client.get_entity(GROUP_INVITE)
+    except InviteHashExpiredError:
+        raise RuntimeError("لینک دعوت گروه منقضی/نامعتبره - یک لینک تازه بگیر")
+
+
 async def get_game_url(client):
-    entity = await client.get_entity(GROUP_INVITE)
-    async for message in client.iter_messages(entity, limit=200):
+    entity = await join_group(client)
+    print("عضو گروه شدیم / از قبل عضو بودیم:", getattr(entity, "title", entity))
+
+    async for message in client.iter_messages(entity, limit=300):
         if not message.buttons:
             continue
         for row in message.buttons:
@@ -107,15 +122,21 @@ async def play(url):
 
 
 async def main():
-    async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
-        url = await get_game_url(client)
-        print("Game URL:", url)
+    try:
+        async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
+            url = await get_game_url(client)
+            print("Game URL:", url)
 
-        if MODE == "recon":
-            await recon(url)
-        else:
-            await play(url)
+            if MODE == "recon":
+                await recon(url)
+            else:
+                await play(url)
+    except FloodWaitError as e:
+        print(f"تلگرام گفته {e.seconds} ثانیه صبر کنیم. اسکریپت رو الان متوقف می‌کنیم "
+              f"(دوباره خودتون دستی redeploy کنید بعد از اتمام این زمان).")
+        return
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+        
