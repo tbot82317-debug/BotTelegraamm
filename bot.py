@@ -315,17 +315,18 @@ async def play(url):
         async def start_round():
             cx = canvas_box["x"] + canvas_box["width"] / 2
             cy = canvas_box["y"] + canvas_box["height"] * 0.85
-            for attempt in range(10):
-                await page.mouse.click(cx, cy)
-                await asyncio.sleep(0.8)
-                cls = await get_class()
-                print(f"   تلاش شروع #{attempt}: class={cls}")
-                if "in_game" in (cls or ""):
-                    return True
-            print("هشدار: بعد از چند تلاش وارد حالت in_game نشدیم؛ class فعلی:", await get_class())
-            return False
+            await page.mouse.click(cx, cy)
+            await asyncio.sleep(1.5)
+            cls = await get_class()
+            print(f"   بعد از کلیک شروع: class={cls}")
+            return "in_game" in (cls or "")
 
-        await start_round()
+        started = await start_round()
+        if not started:
+            print("شروع بازی جواب نداد (احتمالاً هنوز محدودیت سرور برقراره) - همینجا متوقف می‌شیم، اسپم نمی‌کنیم.")
+            await browser.close()
+            return
+
         baseline_left = await sample_avg_color(page, region(left_x))
         baseline_right = await sample_avg_color(page, region(right_x))
         print(f"baseline: left={baseline_left} right={baseline_right}")
@@ -357,10 +358,13 @@ async def play(url):
                 rounds += 1
                 consecutive_zero = consecutive_zero + 1 if round_score == 0 else 0
                 print(f"دور {rounds} تموم شد - امتیاز این دور: {round_score} - مجموع: {total_score}")
-                if consecutive_zero >= 15:
-                    print("۱۵ دور پشت سر هم امتیاز صفر بود - کالیبراسیون نیاز به بازبینی داره، خارج می‌شیم")
+                if consecutive_zero >= 3:
+                    print("۳ دور پشت سر هم امتیاز صفر بود - احتمالاً محدودیت سرور یا کالیبراسیون غلطه، خارج می‌شیم")
                     break
-                await start_round()
+                restarted = await start_round()
+                if not restarted:
+                    print("ریستارت دور بعدی جواب نداد - متوقف می‌شیم، اسپم نمی‌کنیم")
+                    break
                 baseline_left = await sample_avg_color(page, region(left_x))
                 baseline_right = await sample_avg_color(page, region(right_x))
                 current_side = "left"
