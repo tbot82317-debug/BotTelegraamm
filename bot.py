@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -8,6 +9,7 @@ from telethon.tl.functions.channels import GetParticipantsRequest
 from telethon.tl.types import ChannelParticipantsBots, BotMenuButton, KeyboardButtonGame
 from telethon.errors import UserAlreadyParticipantError, FloodWaitError, InviteHashExpiredError
 from playwright.async_api import async_playwright
+from PIL import Image
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
@@ -20,6 +22,15 @@ CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "4467330949"))  # آیدی عدد�
 MODE = os.environ.get("MODE", "recon")  # "recon" یا "play"
 TARGET_SCORE = int(os.environ.get("TARGET_SCORE", "4000"))
 VIEWPORT = {"width": 412, "height": 915}  # نسبت صفحه یک گوشی معمولی اندروید
+
+# --- تنظیمات کالیبراسیون برای play() ---
+LEFT_FRAC = float(os.environ.get("LEFT_FRAC", "0.32"))   # نسبت افقی نقطه چک چپ نسبت به عرض canvas
+RIGHT_FRAC = float(os.environ.get("RIGHT_FRAC", "0.68"))  # نسبت افقی نقطه چک راست
+ROW_FRAC = float(os.environ.get("ROW_FRAC", "0.78"))      # نسبت عمودی ردیف چک (نزدیک شخصیت)
+SAMPLE_SIZE = int(os.environ.get("SAMPLE_SIZE", "16"))    # اندازه مربع نمونه‌برداری (پیکسل)
+DIFF_THRESHOLD = float(os.environ.get("DIFF_THRESHOLD", "40"))  # آستانه تشخیص تغییر رنگ
+TICK_INTERVAL = float(os.environ.get("TICK_INTERVAL", "0.15"))  # فاصله هر بررسی (ثانیه)
+MAX_RUNTIME_SECONDS = int(os.environ.get("MAX_RUNTIME_SECONDS", "1200"))  # سقف زمانی کل اجرا
 
 
 async def join_group(client):
@@ -243,10 +254,29 @@ async def recon(url):
         await browser.close()
 
 
+async def sample_avg_color(page, box):
+    """میانگین رنگ یک ناحیه کوچیک از صفحه رو برمی‌گردونه (با اسکرین‌شات واقعی، نه canvas API)."""
+    png_bytes = await page.screenshot(clip=box)
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    pixels = list(img.getdata())
+    n = len(pixels)
+    r = sum(p[0] for p in pixels) / n
+    g = sum(p[1] for p in pixels) / n
+    b = sum(p[2] for p in pixels) / n
+    return (r, g, b)
+
+
+def color_diff(c1, c2):
+    return sum(abs(a - b) for a, b in zip(c1, c2))
+
+
 async def play(url):
     """
-    حالت بازی واقعی - فعلاً اسکلت‌ه.
-    بعد از دیدن خروجی recon، selector های TODO رو کامل می‌کنیم.
+    حالت بازی واقعی: چون canvas به‌خاطر CORS تصاویر cross-origin "آلوده" شده،
+    getImageData جواب نمی‌ده. به‌جاش با اسکرین‌شات واقعی Playwright (که این
+    محدودیت رو نداره) دو نقطه کنار تنه درخت (چپ/راست) رو در لحظه‌ی امن شروع
+    به‌عنوان "رنگ خالی" ذخیره می‌کنیم؛ هر تیک بعدی، هرکدوم که رنگش عوض شده
+    باشه یعنی شاخه اونجاست، پس سمت مقابل رو می‌زنیم.
     """
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -254,33 +284,91 @@ async def play(url):
         await page.goto(url)
         await asyncio.sleep(3)
 
-        # TODO: کلیک روی دکمه پلی داخل صفحه با selector واقعی
-        # await page.click("SELECTOR_PLAY_BUTTON")
-        await page.mouse.click(VIEWPORT["width"] / 2, VIEWPORT["height"] * 0.72)
-        await asyncio.sleep(1.5)
+        canvas = page.locator("#canvas_wrap canvas")
+        canvas_box = await canvas.bounding_box()
 
-        score = 0
-        misses = 0
-        while score < TARGET_SCORE and misses < 5:
-            # TODO: خواندن سمت شاخه از DOM واقعی، مثلا:
-            # side = await page.eval_on_selector(".branch.active", "el => el.dataset.side")
-            side = None  # placeholder تا وقتی selector واقعی رو نداریم
+        # نقاط نمونه‌برداری: کمی چپ و کمی راست تنه، در ارتفاعی نزدیک شخصیت
+        left_x = canvas_box["x"] + canvas_box["width"] * LEFT_FRAC
+        right_x = canvas_box["x"] + canvas_box["width"] * RIGHT_FRAC
+        sample_y = canvas_box["y"] + canvas_box["height"] * ROW_FRAC
 
-            if side is None:
-                misses += 1
-                await asyncio.sleep(0.3)
+        def region(cx):
+            return {
+                "x": cx - SAMPLE_SIZE / 2,
+                "y": sample_y - SAMPLE_SIZE / 2,
+                "width": SAMPLE_SIZE,
+                "height": SAMPLE_SIZE,
+            }
+
+        total_score = 0
+        rounds = 0
+        start_time = asyncio.get_event_loop().time()
+
+        async def start_round():
+            cx = canvas_box["x"] + canvas_box["width"] / 2
+            cy = canvas_box["y"] + canvas_box["height"] * 0.85
+            await page.mouse.click(cx, cy)
+            await asyncio.sleep(0.8)
+
+        await start_round()
+        baseline_left = await sample_avg_color(page, region(left_x))
+        baseline_right = await sample_avg_color(page, region(right_x))
+        print(f"baseline: left={baseline_left} right={baseline_right}")
+
+        current_side = "left"  # فرض اولیه‌ی سمت ایستادن شخصیت؛ اگه برعکس بود با LEFT_FRAC/RIGHT_FRAC جابجا کن
+
+        while total_score < TARGET_SCORE:
+            if asyncio.get_event_loop().time() - start_time > MAX_RUNTIME_SECONDS:
+                print("زمان مجاز اجرا تموم شد، خارج می‌شیم")
+                break
+
+            try:
+                pw_class = await page.eval_on_selector(
+                    "body", "el => (document.getElementById('page_wrap')||{}).className || ''"
+                )
+            except Exception:
+                pw_class = ""
+
+            if "in_result" in (pw_class or ""):
+                try:
+                    score_text = await page.eval_on_selector(
+                        "#score_value", "el => el.textContent"
+                    )
+                    round_score = int("".join(ch for ch in score_text if ch.isdigit()) or 0)
+                except Exception:
+                    round_score = 0
+                total_score += round_score
+                rounds += 1
+                print(f"دور {rounds} تموم شد - امتیاز این دور: {round_score} - مجموع: {total_score}")
+                await start_round()
+                baseline_left = await sample_avg_color(page, region(left_x))
+                baseline_right = await sample_avg_color(page, region(right_x))
+                current_side = "left"
                 continue
 
-            safe_side = "right" if side == "left" else "left"
-            x = VIEWPORT["width"] * (0.25 if safe_side == "left" else 0.75)
-            y = VIEWPORT["height"] * 0.92
-            await page.mouse.click(x, y)
-            await asyncio.sleep(0.3)
+            left_color = await sample_avg_color(page, region(left_x))
+            right_color = await sample_avg_color(page, region(right_x))
 
-            # TODO: خواندن امتیاز واقعی از DOM
-            # score = int(await page.eval_on_selector(".score", "el => el.textContent"))
+            diff_left = color_diff(left_color, baseline_left)
+            diff_right = color_diff(right_color, baseline_right)
 
-        print(f"پایان - امتیاز نهایی: {score}")
+            danger_side = None
+            if diff_left > DIFF_THRESHOLD and diff_left >= diff_right:
+                danger_side = "left"
+            elif diff_right > DIFF_THRESHOLD and diff_right > diff_left:
+                danger_side = "right"
+
+            if danger_side is not None and danger_side == current_side:
+                safe_side = "right" if danger_side == "left" else "left"
+                try:
+                    await page.click(f"#button_{safe_side}", timeout=500)
+                    current_side = safe_side
+                except Exception as e:
+                    print("خطا در کلیک:", e)
+
+            await asyncio.sleep(TICK_INTERVAL)
+
+        print(f"پایان - مجموع امتیاز: {total_score} در {rounds} دور")
         await browser.close()
 
 
