@@ -282,7 +282,7 @@ async def play(url):
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = await browser.new_page(viewport=VIEWPORT)
         await page.goto(url)
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
 
         canvas = page.locator("#canvas_wrap canvas")
         canvas_box = await canvas.bounding_box()
@@ -315,13 +315,13 @@ async def play(url):
         async def start_round():
             cx = canvas_box["x"] + canvas_box["width"] / 2
             cy = canvas_box["y"] + canvas_box["height"] * 0.85
-            for attempt in range(6):
+            for attempt in range(10):
                 await page.mouse.click(cx, cy)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.8)
                 cls = await get_class()
+                print(f"   تلاش شروع #{attempt}: class={cls}")
                 if "in_game" in (cls or ""):
                     return True
-                await asyncio.sleep(0.3)
             print("هشدار: بعد از چند تلاش وارد حالت in_game نشدیم؛ class فعلی:", await get_class())
             return False
 
