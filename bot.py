@@ -304,11 +304,26 @@ async def play(url):
         rounds = 0
         start_time = asyncio.get_event_loop().time()
 
+        async def get_class():
+            try:
+                return await page.eval_on_selector(
+                    "body", "el => (document.getElementById('page_wrap')||{}).className || ''"
+                )
+            except Exception:
+                return ""
+
         async def start_round():
             cx = canvas_box["x"] + canvas_box["width"] / 2
             cy = canvas_box["y"] + canvas_box["height"] * 0.85
-            await page.mouse.click(cx, cy)
-            await asyncio.sleep(0.8)
+            for attempt in range(6):
+                await page.mouse.click(cx, cy)
+                await asyncio.sleep(0.5)
+                cls = await get_class()
+                if "in_game" in (cls or ""):
+                    return True
+                await asyncio.sleep(0.3)
+            print("هشدار: بعد از چند تلاش وارد حالت in_game نشدیم؛ class فعلی:", await get_class())
+            return False
 
         await start_round()
         baseline_left = await sample_avg_color(page, region(left_x))
@@ -316,6 +331,7 @@ async def play(url):
         print(f"baseline: left={baseline_left} right={baseline_right}")
 
         current_side = "left"  # فرض اولیه‌ی سمت ایستادن شخصیت؛ اگه برعکس بود با LEFT_FRAC/RIGHT_FRAC جابجا کن
+        consecutive_zero = 0
 
         while total_score < TARGET_SCORE:
             if asyncio.get_event_loop().time() - start_time > MAX_RUNTIME_SECONDS:
@@ -339,7 +355,11 @@ async def play(url):
                     round_score = 0
                 total_score += round_score
                 rounds += 1
+                consecutive_zero = consecutive_zero + 1 if round_score == 0 else 0
                 print(f"دور {rounds} تموم شد - امتیاز این دور: {round_score} - مجموع: {total_score}")
+                if consecutive_zero >= 15:
+                    print("۱۵ دور پشت سر هم امتیاز صفر بود - کالیبراسیون نیاز به بازبینی داره، خارج می‌شیم")
+                    break
                 await start_round()
                 baseline_left = await sample_avg_color(page, region(left_x))
                 baseline_right = await sample_avg_color(page, region(right_x))
