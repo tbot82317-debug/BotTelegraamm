@@ -270,6 +270,25 @@ def color_diff(c1, c2):
     return sum(abs(a - b) for a, b in zip(c1, c2))
 
 
+async def new_stealth_page(browser):
+    """یک context با User-Agent موبایل واقعی و مخفی‌سازی navigator.webdriver می‌سازه
+    تا بازی، مرورگر رو به‌عنوان اتوماسیون شناسایی نکنه."""
+    context = await browser.new_context(
+        viewport=VIEWPORT,
+        user_agent=(
+            "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+        ),
+        is_mobile=True,
+        has_touch=True,
+    )
+    await context.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+    )
+    page = await context.new_page()
+    return context, page
+
+
 async def play(url):
     """
     حالت بازی واقعی: چون canvas به‌خاطر CORS تصاویر cross-origin "آلوده" شده،
@@ -280,7 +299,7 @@ async def play(url):
     """
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = await browser.new_page(viewport=VIEWPORT)
+        context, page = await new_stealth_page(browser)
         await page.goto(url)
         await asyncio.sleep(5)
 
